@@ -1,0 +1,52 @@
+- name: Install topgrade on Debian-based systems
+  when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
+  block:
+    - name: Retrieve topgrade release data
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/topgrade-rs/topgrade/releases/latest
+        body_format: json
+        return_content: true
+      register: topgrade_release_json
+
+    - name: Extract x86_64 package URL
+      no_log: true
+      ansible.builtin.set_fact:
+        package_url: "{{ item.browser_download_url }}"
+      with_items: "{{ topgrade_release_json.json.assets }}"
+      when:
+        - item.browser_download_url | regex_search("amd64.deb$")
+        - ansible_architecture == "x86_64"
+
+    - name: Extract aarch64 package URL
+      no_log: true
+      ansible.builtin.set_fact:
+        package_url: "{{ item.browser_download_url }}"
+      with_items: "{{ topgrade_release_json.json.assets }}"
+      when:
+        - item.browser_download_url | regex_search("arm64.deb$")
+        - ansible_architecture == "aarch64"
+
+    - name: Fail if package not found
+      ansible.builtin.fail:
+        msg: "Unable to find topgrade package for arch {{ ansible_architecture }}"
+      when: package_url is not defined
+
+    - name: Set package filename
+      ansible.builtin.set_fact:
+        package_filename: "{{ package_url.split('/') | last }}"
+
+    - name: Download package
+      ansible.builtin.get_url:
+        url: "{{ package_url }}"
+        dest: "/tmp/{{ package_filename }}"
+        mode: "0660"
+
+    - name: Install package
+      ansible.builtin.apt:
+        deb: "/tmp/{{ package_filename }}"
+      become: true
+
+    - name: Cleanup package
+      ansible.builtin.file:
+        state: absent
+        path: "/tmp/{{ package_filename }}"
