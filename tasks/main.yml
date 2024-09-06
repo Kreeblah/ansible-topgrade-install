@@ -26,6 +26,7 @@
   when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
   block:
     - name: Retrieve topgrade release data from GitHub
+      run_once: true
       ansible.builtin.uri:
         url: https://api.github.com/repos/topgrade-rs/topgrade/releases/latest
         body_format: json
@@ -33,44 +34,87 @@
       register: topgrade_release_json
 
     - name: Extract Debian topgrade x86_64 package URL
+      run_once: true
       no_log: true
       ansible.builtin.set_fact:
-        package_url: "{{ item.browser_download_url }}"
+        deb_amd64_package_url: "{{ item.browser_download_url }}"
       with_items: "{{ topgrade_release_json.json.assets }}"
-      when:
-        - item.browser_download_url | regex_search("amd64.deb$")
-        - ansible_architecture == "x86_64"
+      when: item.browser_download_url | regex_search("topgrade_[0-9.-]+_amd64.deb$")
 
     - name: Extract Debian topgrade aarch64 package URL
+      run_once: true
       no_log: true
       ansible.builtin.set_fact:
-        package_url: "{{ item.browser_download_url }}"
+        deb_arm64_package_url: "{{ item.browser_download_url }}"
       with_items: "{{ topgrade_release_json.json.assets }}"
-      when:
-        - item.browser_download_url | regex_search("arm64.deb$")
-        - ansible_architecture == "aarch64"
+      when: item.browser_download_url | regex_search("topgrade_[0-9.-]+_arm64.deb$")
 
-    - name: Fail if Debian topgrade package not found
+    - name: Set Debian topgrade package URL for amd64
+      ansible.builtin.set_fact:
+        deb_package_url: "{{ deb_amd64_package_url }}"
+      when: ansible_architecture == "x86_64"
+
+    - name: Set Debian topgrade package URL for arm64
+      ansible.builtin.set_fact:
+        deb_package_url: "{{ deb_arm64_package_url }}"
+      when: ansible_architecture == "aarch64"
+
+    - name: Fail if Debian topgrade package not found in project
       ansible.builtin.fail:
         msg: "Unable to find topgrade package for arch {{ ansible_architecture }}"
-      when: package_url is not defined
+      when: deb_package_url is not defined
 
-    - name: Set Debian topgrade package filename
+    - name: Extract version number from Debian topgrade package name
       ansible.builtin.set_fact:
-        package_filename: "{{ package_url.split('/') | last }}"
+        github_package_version: "{{ deb_package_url | regex_search('topgrade_([0-9.-]+)_', '\\1') | first }}"
 
-    - name: Download Debian package
-      ansible.builtin.get_url:
-        url: "{{ package_url }}"
-        dest: "/tmp/{{ package_filename }}"
-        mode: "0660"
+    - name: Print Debian topgrade package version in project
+      ansible.builtin.debug:
+        msg: "topgrade package version in project: {{ github_package_version }}"
 
-    - name: Install Debian topgrade package
-      ansible.builtin.apt:
-        deb: "/tmp/{{ package_filename }}"
-      become: true
+    - name: Get installed Debian packages
+      ansible.builtin.package_facts:
 
-    - name: Cleanup Debian topgrade package
-      ansible.builtin.file:
-        state: absent
-        path: "/tmp/{{ package_filename }}"
+    - name: Extract installed Debian topgrade package version
+      ansible.builtin.set_fact:
+        deb_installed_packages: "{{ ansible_facts.packages['topgrade'] | map(attribute='version') | list }}"
+      when:
+        - ansible_facts.packages.topgrade is defined
+        - ansible_facts.packages['topgrade'] | length > 0
+
+    - name: Print installed Debian topgrade package versions
+      ansible.builtin.debug:
+        msg: "Installed Debian topgrade package version: {{ item }}"
+      loop: "{{ deb_installed_packages }}"
+      when: deb_installed_packages is defined
+
+    - name: Set fact to skip installation if current Debian topgrade package is already installed
+      ansible.builtin.set_fact:
+        deb_skip_install: true
+      loop: "{{ deb_installed_packages }}"
+      when:
+        - deb_installed_packages is defined
+        - item == github_package_version
+
+    - name: Do Debian topgrade package installation tasks
+      when: not deb_skip_install is defined or not deb_skip_install
+      block:
+        - name: Set Debian topgrade package filename
+          ansible.builtin.set_fact:
+            package_filename: "{{ deb_package_url.split('/') | last }}"
+
+        - name: Download Debian package
+          ansible.builtin.get_url:
+            url: "{{ deb_package_url }}"
+            dest: "/tmp/{{ package_filename }}"
+            mode: "0660"
+
+        - name: Install Debian topgrade package
+          ansible.builtin.apt:
+            deb: "/tmp/{{ package_filename }}"
+          become: true
+
+        - name: Cleanup Debian topgrade package
+          ansible.builtin.file:
+            state: absent
+            path: "/tmp/{{ package_filename }}"
