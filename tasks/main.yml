@@ -39,7 +39,7 @@
       ansible.builtin.set_fact:
         deb_amd64_package_url: "{{ item.browser_download_url }}"
       with_items: "{{ topgrade_release_json.json.assets }}"
-      when: item.browser_download_url | regex_search("topgrade_[0-9.-]+_amd64.deb$")
+      when: item.browser_download_url is defined and item.browser_download_url is not none and item.browser_download_url | length > 0 | regex_search("topgrade_[0-9.-]+_amd64.deb$")
 
     - name: Extract Debian topgrade aarch64 package URL
       run_once: true
@@ -47,7 +47,7 @@
       ansible.builtin.set_fact:
         deb_arm64_package_url: "{{ item.browser_download_url }}"
       with_items: "{{ topgrade_release_json.json.assets }}"
-      when: item.browser_download_url | regex_search("topgrade_[0-9.-]+_arm64.deb$")
+      when: item.browser_download_url is defined and item.browser_download_url is not none and item.browser_download_url | length > 0 | regex_search("topgrade_[0-9.-]+_arm64.deb$")
 
     - name: Set Debian topgrade package URL for amd64
       ansible.builtin.set_fact:
